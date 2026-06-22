@@ -24,7 +24,6 @@
         .studio-area { display: none; margin-top: 1.5rem; }
         #teacher-video { width: 100%; border-radius: 8px; background: #000; }
         
-        /* Chat Box */
         .chat-box { border: 1px solid #e2e8f0; border-radius: 8px; height: 300px; display: flex; flex-direction: column; margin-top: 1rem;}
         .chat-messages { flex: 1; padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
         .chat-input { display: flex; border-top: 1px solid #e2e8f0; }
@@ -76,7 +75,6 @@
         const peer = new Peer('nexus-live-room');
         let teacherStream = null;
 
-        // --- Scheduling & Notifications ---
         function scheduleClass() {
             const topic = document.getElementById('topic').value;
             const subject = document.getElementById('subject').value;
@@ -90,7 +88,6 @@
             alert("Class scheduled! Students will be notified.");
         }
 
-        // --- Live Broadcast ---
         async function startLive() {
             const topic = document.getElementById('topic').value || "Ad-hoc Class";
             const subject = document.getElementById('subject').value;
@@ -103,7 +100,6 @@
                 document.getElementById('btn-start').style.display = 'none';
                 document.getElementById('btn-stop').style.display = 'block';
                 
-                // Clear chat on new session
                 localStorage.setItem('lms_chat', JSON.stringify([]));
                 loadChat();
 
@@ -125,11 +121,16 @@
             localStorage.setItem('lms_live', JSON.stringify({ isActive: false }));
         }
 
+        // --- FIXED CONNECTION LOGIC ---
         peer.on('connection', (conn) => {
-            if (teacherStream) peer.call(conn.peer, teacherStream);
+            // Added a 500ms buffer so the student portal is fully ready to answer the call
+            setTimeout(() => {
+                if (teacherStream) {
+                    peer.call(conn.peer, teacherStream);
+                }
+            }, 500); 
         });
 
-        // --- Chat System ---
         function sendMessage() {
             const input = document.getElementById('chat-input-text');
             const text = input.value.trim();
@@ -156,7 +157,6 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        // Listen for student messages
         window.addEventListener('storage', (e) => {
             if(e.key === 'lms_chat') loadChat();
         });
