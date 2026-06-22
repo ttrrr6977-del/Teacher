@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher Studio | LMS</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root { --primary: #4f46e5; --bg: #f1f5f9; --card: #fff; --text: #0f172a; --danger: #ef4444; --success: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+        body { background: var(--bg); color: var(--text); }
+        header { background: var(--primary); color: white; padding: 1rem 2rem; }
+        .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+        @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
+        .panel { background: var(--card); padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        input, select { width: 100%; padding: 0.75rem; border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 1rem; }
+        button { padding: 0.75rem; border: none; border-radius: 6px; font-weight: bold; color: white; cursor: pointer; width: 100%; margin-bottom: 0.5rem; transition: opacity 0.2s; }
+        button:hover { opacity: 0.9; }
+        .btn-live { background: var(--success); }
+        .btn-schedule { background: var(--primary); }
+        .btn-stop { background: var(--danger); display: none; }
+        
+        .studio-area { display: none; margin-top: 1.5rem; }
+        #teacher-video { width: 100%; border-radius: 8px; background: #000; }
+        
+        /* Chat Box */
+        .chat-box { border: 1px solid #e2e8f0; border-radius: 8px; height: 300px; display: flex; flex-direction: column; margin-top: 1rem;}
+        .chat-messages { flex: 1; padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+        .chat-input { display: flex; border-top: 1px solid #e2e8f0; }
+        .chat-input input { margin: 0; border: none; border-radius: 0; border-bottom-left-radius: 8px; }
+        .chat-input button { margin: 0; width: auto; border-radius: 0; border-bottom-right-radius: 8px; background: var(--primary); padding: 0 1.5rem; }
+        .msg { background: #f1f5f9; padding: 0.5rem 1rem; border-radius: 8px; width: fit-content; max-width: 80%; }
+        .msg.teacher { background: #e0e7ff; align-self: flex-end; }
+        .msg strong { display: block; font-size: 0.8rem; color: #64748b; }
+    </style>
+</head>
+<body>
+
+    <header><h1><i class="fa-solid fa-chalkboard-user"></i> Teacher Studio</h1></header>
+
+    <div class="container">
+        <div class="panel">
+            <h2><i class="fa-solid fa-calendar-plus"></i> Class Setup</h2>
+            <input type="text" id="topic" placeholder="Class Topic (e.g., HTML Basics)">
+            <select id="subject">
+                <option value="Computer Science">Computer Science</option>
+                <option value="Mathematics">Mathematics</option>
+                <option value="Physics">Physics</option>
+                <option value="Literature">Literature</option>
+                <option value="History">History</option>
+            </select>
+            <input type="datetime-local" id="schedule-time">
+            
+            <button class="btn-schedule" onclick="scheduleClass()">Schedule Class</button>
+            <hr style="margin: 1rem 0; border: 0; border-top: 1px solid #e2e8f0;">
+            <button class="btn-live" id="btn-start" onclick="startLive()">Go Live Now</button>
+            <button class="btn-stop" id="btn-stop" onclick="stopLive()">Stop Broadcast</button>
+        </div>
+
+        <div class="panel studio-area" id="studio-area">
+            <h2><i class="fa-solid fa-video"></i> Live Feed</h2>
+            <video id="teacher-video" autoplay muted playsinline></video>
+            
+            <div class="chat-box">
+                <div class="chat-messages" id="chat-messages"></div>
+                <div class="chat-input">
+                    <input type="text" id="chat-input-text" placeholder="Type a message...">
+                    <button onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const peer = new Peer('nexus-live-room');
+        let teacherStream = null;
+
+        // --- Scheduling & Notifications ---
+        function scheduleClass() {
+            const topic = document.getElementById('topic').value;
+            const subject = document.getElementById('subject').value;
+            const time = document.getElementById('schedule-time').value;
+
+            if(!topic || !time) return alert("Please fill topic and time!");
+
+            const scheduled = JSON.parse(localStorage.getItem('lms_scheduled') || '[]');
+            scheduled.push({ id: Date.now(), topic, subject, time, notified: false });
+            localStorage.setItem('lms_scheduled', JSON.stringify(scheduled));
+            alert("Class scheduled! Students will be notified.");
+        }
+
+        // --- Live Broadcast ---
+        async function startLive() {
+            const topic = document.getElementById('topic').value || "Ad-hoc Class";
+            const subject = document.getElementById('subject').value;
+
+            try {
+                teacherStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('teacher-video').srcObject = teacherStream;
+                
+                document.getElementById('studio-area').style.display = 'block';
+                document.getElementById('btn-start').style.display = 'none';
+                document.getElementById('btn-stop').style.display = 'block';
+                
+                // Clear chat on new session
+                localStorage.setItem('lms_chat', JSON.stringify([]));
+                loadChat();
+
+                localStorage.setItem('lms_live', JSON.stringify({ isActive: true, topic, subject }));
+            } catch (err) {
+                alert("Camera error! Ensure you are running a Local Server.");
+            }
+        }
+
+        function stopLive() {
+            if(teacherStream) {
+                teacherStream.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('teacher-video').srcObject = null;
+            document.getElementById('studio-area').style.display = 'none';
+            document.getElementById('btn-start').style.display = 'block';
+            document.getElementById('btn-stop').style.display = 'none';
+            
+            localStorage.setItem('lms_live', JSON.stringify({ isActive: false }));
+        }
+
+        peer.on('connection', (conn) => {
+            if (teacherStream) peer.call(conn.peer, teacherStream);
+        });
+
+        // --- Chat System ---
+        function sendMessage() {
+            const input = document.getElementById('chat-input-text');
+            const text = input.value.trim();
+            if(!text) return;
+
+            const chat = JSON.parse(localStorage.getItem('lms_chat') || '[]');
+            chat.push({ sender: 'Teacher', text: text, isTeacher: true });
+            localStorage.setItem('lms_chat', JSON.stringify(chat));
+            
+            input.value = '';
+            loadChat();
+        }
+
+        function loadChat() {
+            const chat = JSON.parse(localStorage.getItem('lms_chat') || '[]');
+            const container = document.getElementById('chat-messages');
+            container.innerHTML = '';
+            chat.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = `msg ${msg.isTeacher ? 'teacher' : ''}`;
+                div.innerHTML = `<strong>${msg.sender}</strong> ${msg.text}`;
+                container.appendChild(div);
+            });
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Listen for student messages
+        window.addEventListener('storage', (e) => {
+            if(e.key === 'lms_chat') loadChat();
+        });
+    </script>
+</body>
+</html>
