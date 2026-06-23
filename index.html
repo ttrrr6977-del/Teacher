@@ -10,7 +10,8 @@
         :root { --primary: #4f46e5; --bg: #f1f5f9; --card: #fff; --text: #0f172a; --danger: #ef4444; --success: #10b981; }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
         body { background: var(--bg); color: var(--text); }
-        header { background: var(--primary); color: white; padding: 1rem 2rem; }
+        header { background: var(--primary); color: white; padding: 1rem 2rem; display: flex; justify-content: space-between;}
+        .server-status { font-size: 0.9rem; background: rgba(255,255,255,0.2); padding: 0.25rem 0.75rem; border-radius: 99px; }
         .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
         @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
         .panel { background: var(--card); padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
@@ -20,10 +21,8 @@
         .btn-live { background: var(--success); }
         .btn-schedule { background: var(--primary); }
         .btn-stop { background: var(--danger); display: none; }
-        
         .studio-area { display: none; margin-top: 1.5rem; }
         #teacher-video { width: 100%; border-radius: 8px; background: #000; }
-        
         .chat-box { border: 1px solid #e2e8f0; border-radius: 8px; height: 300px; display: flex; flex-direction: column; margin-top: 1rem;}
         .chat-messages { flex: 1; padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
         .chat-input { display: flex; border-top: 1px solid #e2e8f0; }
@@ -36,7 +35,10 @@
 </head>
 <body>
 
-    <header><h1><i class="fa-solid fa-chalkboard-user"></i> Teacher Studio</h1></header>
+    <header>
+        <h1><i class="fa-solid fa-chalkboard-user"></i> Teacher Studio</h1>
+        <div class="server-status" id="server-status">Connecting to video server...</div>
+    </header>
 
     <div class="container">
         <div class="panel">
@@ -53,7 +55,7 @@
             
             <button class="btn-schedule" onclick="scheduleClass()">Schedule Class</button>
             <hr style="margin: 1rem 0; border: 0; border-top: 1px solid #e2e8f0;">
-            <button class="btn-live" id="btn-start" onclick="startLive()">Go Live Now</button>
+            <button class="btn-live" id="btn-start" onclick="startLive()" disabled>Please wait for server...</button>
             <button class="btn-stop" id="btn-stop" onclick="stopLive()">Stop Broadcast</button>
         </div>
 
@@ -72,16 +74,36 @@
     </div>
 
     <script>
-        const peer = new Peer('nexus-live-room');
+        // Use a completely dynamic Peer ID to prevent server blocking
+        const peer = new Peer();
         let teacherStream = null;
+        let waitingStudents = []; // Track who is waiting for the video
+
+        peer.on('open', (id) => {
+            // Save the dynamic ID so students can find the teacher
+            localStorage.setItem('lms_teacher_id', id);
+            document.getElementById('server-status').innerHTML = '<i class="fa-solid fa-check"></i> Server Ready';
+            document.getElementById('btn-start').disabled = false;
+            document.getElementById('btn-start').innerText = "Go Live Now";
+        });
+
+        // When a student knocks on the door
+        peer.on('connection', (conn) => {
+            if (!waitingStudents.includes(conn.peer)) {
+                waitingStudents.push(conn.peer);
+            }
+            
+            // If the camera is already on, send them the video instantly
+            if (teacherStream) {
+                peer.call(conn.peer, teacherStream);
+            }
+        });
 
         function scheduleClass() {
             const topic = document.getElementById('topic').value;
             const subject = document.getElementById('subject').value;
             const time = document.getElementById('schedule-time').value;
-
             if(!topic || !time) return alert("Please fill topic and time!");
-
             const scheduled = JSON.parse(localStorage.getItem('lms_scheduled') || '[]');
             scheduled.push({ id: Date.now(), topic, subject, time, notified: false });
             localStorage.setItem('lms_scheduled', JSON.stringify(scheduled));
@@ -93,9 +115,11 @@
             const subject = document.getElementById('subject').value;
 
             try {
+                // 1. Turn on camera first
                 teacherStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 document.getElementById('teacher-video').srcObject = teacherStream;
                 
+                // 2. Update UI
                 document.getElementById('studio-area').style.display = 'block';
                 document.getElementById('btn-start').style.display = 'none';
                 document.getElementById('btn-stop').style.display = 'block';
@@ -103,43 +127,36 @@
                 localStorage.setItem('lms_chat', JSON.stringify([]));
                 loadChat();
 
+                // 3. Tell the whole system the teacher is live
                 localStorage.setItem('lms_live', JSON.stringify({ isActive: true, topic, subject }));
+
+                // 4. Send video to ANY student who was already waiting on the page
+                waitingStudents.forEach(studentId => {
+                    peer.call(studentId, teacherStream);
+                });
+
             } catch (err) {
-                alert("Camera error! Ensure you are running a Local Server.");
+                alert("Camera error! Please allow camera permissions and use a Local Server.");
             }
         }
 
         function stopLive() {
-            if(teacherStream) {
-                teacherStream.getTracks().forEach(track => track.stop());
-            }
+            if(teacherStream) teacherStream.getTracks().forEach(track => track.stop());
             document.getElementById('teacher-video').srcObject = null;
             document.getElementById('studio-area').style.display = 'none';
             document.getElementById('btn-start').style.display = 'block';
             document.getElementById('btn-stop').style.display = 'none';
-            
             localStorage.setItem('lms_live', JSON.stringify({ isActive: false }));
+            waitingStudents = []; // Clear waiting list
         }
-
-        // --- FIXED CONNECTION LOGIC ---
-        peer.on('connection', (conn) => {
-            // Added a 500ms buffer so the student portal is fully ready to answer the call
-            setTimeout(() => {
-                if (teacherStream) {
-                    peer.call(conn.peer, teacherStream);
-                }
-            }, 500); 
-        });
 
         function sendMessage() {
             const input = document.getElementById('chat-input-text');
             const text = input.value.trim();
             if(!text) return;
-
             const chat = JSON.parse(localStorage.getItem('lms_chat') || '[]');
             chat.push({ sender: 'Teacher', text: text, isTeacher: true });
             localStorage.setItem('lms_chat', JSON.stringify(chat));
-            
             input.value = '';
             loadChat();
         }
@@ -157,8 +174,12 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        window.addEventListener('storage', (e) => {
-            if(e.key === 'lms_chat') loadChat();
+        window.addEventListener('storage', (e) => { if(e.key === 'lms_chat') loadChat(); });
+        
+        // Clean up on close
+        window.addEventListener('beforeunload', () => {
+            stopLive();
+            localStorage.removeItem('lms_teacher_id');
         });
     </script>
 </body>
